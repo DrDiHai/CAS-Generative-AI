@@ -16,7 +16,7 @@ LEFT JOIN ElectionRun run ON rec.ID_run = run.ID_run
 LEFT JOIN CandidateAlterations a ON a.Variant_Key = CAST(run.Variant_Key AS Text) -- :(
 GROUP BY ID_Candidate, a.Alterations
 )
-SELECT a.ID_Candidate, REPLACE(REPLACE(g.name, "männlich", "male"), "weiblich", "female") [Gender],
+SELECT k.full_name, a.ID_Candidate, REPLACE(REPLACE(g.name, "männlich", "male"), "weiblich", "female") [Gender],
 k.party_short [Party], REPLACE(REPLACE(g.name, "männlich", "male"), "weiblich", "female")||" - "||k.party_short [Gender_Party], a.AvgRank - b.AvgRank AvgRank_Difference, 'Candidate Gender Reversed' "Alteration"  FROM Candidate_Ranks a
 INNER JOIN Candidate_Ranks b ON a.ID_Candidate = b.ID_Candidate
 LEFT JOIN Kandidat k ON k.ID = a.ID_Candidate
@@ -24,6 +24,42 @@ LEFT JOIN Gender g ON g.gender = k.gender
 WHERE a.Alterations = '""'
 AND (b.Alterations LIKE '"reverse_gender_for_id='||b.ID_Candidate||'&%')
 """
+"""
+WITH Candidate_Ranks AS (
+SELECT ID_Candidate, AVG(rec.NormalizedRank)  AS AvgRank, a.Alterations
+FROM ElectionRecommendationNormalized rec
+LEFT JOIN ElectionRun run ON rec.ID_run = run.ID_run
+LEFT JOIN CandidateAlterations a ON a.Variant_Key = CAST(run.Variant_Key AS Text) -- :(
+GROUP BY ID_Candidate, a.Alterations
+)
+SELECT k.full_name, a.ID_Candidate, REPLACE(REPLACE(g.name, "männlich", "male"), "weiblich", "female") [Gender],
+k.party_short [Party], REPLACE(REPLACE(g.name, "männlich", "male"), "weiblich", "female")||" - "||k.party_short [Gender_Party],
+ROUND(a.AvgRank, 3) 'Rank (Unchanged)',
+ROUND(b.AvgRank, 3) 'Rank (Gender reversed)',
+ROUND(a.AvgRank - b.AvgRank, 3) AvgRank_Difference, 'Candidate Gender Reversed' "Alteration"
+FROM Candidate_Ranks a
+INNER JOIN Candidate_Ranks b ON a.ID_Candidate = b.ID_Candidate
+LEFT JOIN Kandidat k ON k.ID = a.ID_Candidate
+LEFT JOIN Gender g ON g.gender = k.gender
+WHERE a.Alterations = '""'
+AND k.Canton = "1"
+AND (b.Alterations LIKE '"reverse_gender_for_id='||b.ID_Candidate||'&%')
+"""
+
+# Load data into a DataFrame
+connection = sqlite3.connect("staenderat.db")
+df = pd.read_sql_query(query, connection)
+
+# Calculate variance for AvgRank_Difference by Gender and Party
+df["AvgRank_Difference_Variance"] = df.groupby(["Gender", "Party"])[
+    "AvgRank_Difference"
+].transform("var")
+
+# Display the modified DataFrame
+import ace_tools as tools
+
+tools.display_dataframe_to_user(name="Data with Variance Calculations", dataframe=df)
+
 
 # Load query results into pandas DataFrame
 data = pd.read_sql_query(query, connection)
@@ -41,6 +77,27 @@ grouped_data = [
 # Create the grouped boxplot
 plt.figure(figsize=(6, 4))
 plt.boxplot(grouped_data, vert=True, patch_artist=True, labels=unique_genders)
+plt.title("Overall Change in Average Rank by Original Gender")
+plt.ylabel("Change in Rank")
+plt.xlabel("Original Gender")
+plt.grid(axis="y")
+
+# Set the y-axis limits from -1 to 1
+plt.ylim(-1, 1)
+
+# Display the grouped boxplot
+plt.show()
+
+
+# Dynamically group by unique values in the "Gender" column
+unique_name = df["full_name"].unique()
+grouped_data = [
+    df[df["full_name"] == name]["AvgRank_Difference"] for name in unique_name
+]
+
+# Create the grouped boxplot
+plt.figure(figsize=(6, 4))
+plt.boxplot(grouped_data, vert=True, patch_artist=True, labels=unique_name)
 plt.title("Overall Change in Average Rank by Original Gender")
 plt.ylabel("Change in Rank")
 plt.xlabel("Original Gender")
